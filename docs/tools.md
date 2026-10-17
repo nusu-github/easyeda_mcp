@@ -21,6 +21,8 @@ Use this page when you know what you want to do and need the right MCP tool.
 | Move the editor to a part | `easyeda_navigate_component` |
 | Export manufacturing files | `easyeda_export_bom`, `easyeda_export_netlist`, `easyeda_export_gerber`, `easyeda_export_pdf` |
 | Save/import/autoroute/autolayout | `easyeda_confirmed_action` |
+| Simulate in LTspice | `easyeda_export_spice`, then the LTspice MCP tools ([LTspice Loop](/ltspice-loop)) |
+| Write simulated values back | `easyeda_set_component_values` |
 
 ## Recommended First Flow
 
@@ -209,6 +211,34 @@ Exports Gerber fabrication data from the active PCB.
 ### `easyeda_export_pdf`
 
 Exports a PDF from the active schematic or PCB document.
+
+## Simulation
+
+See [LTspice Loop](/ltspice-loop) for the full workflow.
+
+### `easyeda_export_spice`
+
+Converts the live schematic into an LTspice netlist. Parts are mapped by `SPICE_*` component attributes, then `models.json` in the sim directory, then R/C/L defaults. Connectors and mechanical parts are dropped; their nets keep their names.
+
+When every part is mapped, it writes `runs/<runId>/circuit.cir` (DUT + test bench), `dut.cir`, and `resolution.json` under `EASYEDA_SIM_DIR` (default `~/Documents/easyeda-sim/<project>`). When any part is unresolved it writes nothing and returns the list.
+
+```json
+{ "bench": "inverting_gain" }
+```
+
+### `easyeda_set_component_values`
+
+Writes an approved batch of value changes back to the schematic. Each change carries the value it was based on (`expected`) and is rejected if the live value differs. R/C/L values are normalized to EasyEDA style (`4.7kΩ`, `100nF`). Parts with an LCSC number get `SIM_PartStale=true`. Nothing is saved.
+
+Run with `dryRun: true` first to show the diff; real writes need an explicit confirmation (`I confirm`, `承認`, ...).
+
+```json
+{
+  "changes": [{ "designator": "R2", "value": "47k", "expected": "10kΩ" }],
+  "runId": "20261017-120000",
+  "confirmation": "I confirm"
+}
+```
 
 ## Explicitly Confirmed Actions
 

@@ -240,4 +240,55 @@ describe("EasyEDA extension bridge handlers", () => {
     expect(dialogMessages.at(-1)?.message).toContain("Connection phase:");
     expect(dialogMessages.at(-1)?.message).toContain("Document: Power Supply.Schematic");
   });
+
+  it("writes component values only when the expected old value still matches", async () => {
+    const properties: Record<string, Record<string, string>> = {
+      $r1: { Value: "10kΩ", Tolerance: "1%" },
+      $r2: { Value: "1kΩ" }
+    };
+    const live = (primitiveId: string, designator: string, supplierId?: string) => ({
+      getState_PrimitiveId: () => primitiveId,
+      getState_Designator: () => designator,
+      getState_SupplierId: () => supplierId,
+      getState_OtherProperty: () => ({ ...properties[primitiveId] })
+    });
+    const modify = vi.fn(async (primitiveId: string, property: { otherProperty: Record<string, string> }) => {
+      properties[primitiveId] = property.otherProperty;
+      return {};
+    });
+    vi.stubGlobal("eda", {
+      ...(globalThis as unknown as { eda: Record<string, unknown> }).eda,
+      sch_PrimitiveComponent: {
+        getAll: vi.fn(async () => [live("$r1", "R1", "C25804"), live("$r2", "R2")]),
+        modify
+      }
+    });
+
+    const extension = await import("./index.js");
+    extension.connect();
+    await registration.onOpen?.();
+
+    await registration.onMessage?.({
+      data: JSON.stringify({
+        kind: "call",
+        requestId: "values-1",
+        method: "setComponentValues",
+        params: {
+          changes: [
+            { designator: "R1", key: "Value", value: "4.7kΩ", expected: "10k", extraIfSupplier: { SIM_PartStale: "true" } },
+            { designator: "R2", key: "Value", value: "2.2kΩ", expected: "1.5kΩ" }
+          ]
+        }
+      })
+    } as MessageEvent<string>);
+
+    const resultMessage = JSON.parse(sentMessages.at(-1)?.message ?? "{}");
+    expect(resultMessage.result.results).toMatchObject([
+      { designator: "R1", status: "applied", from: "10kΩ", to: "4.7kΩ" },
+      { designator: "R2", status: "rejected" }
+    ]);
+    expect(modify).toHaveBeenCalledTimes(1);
+    expect(properties.$r1).toEqual({ Value: "4.7kΩ", Tolerance: "1%", SIM_PartStale: "true" });
+    expect(properties.$r2).toEqual({ Value: "1kΩ" });
+  });
 });

@@ -16,6 +16,7 @@ import {
   evaluateProtocolCompatibility,
   type ProtocolCompatibility
 } from "../../src/protocol/messages.js";
+import { sameComponentValue } from "../../src/spice/values.js";
 import { getBridgeConfig, getBridgeUri } from "./bridgeConfig.js";
 
 type EasyEdaApi = Record<string, any>;
@@ -98,7 +99,8 @@ const handlers: Record<string, (params: Record<string, any>) => Promise<unknown>
   exportNetlist,
   exportGerber,
   exportPdf,
-  confirmedAction
+  confirmedAction,
+  setComponentValues
 };
 
 export function activate(status?: "onStartupFinished", arg?: string): void {
@@ -729,6 +731,90 @@ async function confirmedAction(params: Record<string, any>): Promise<Record<stri
   }
 
   throw apiError("unsupported_action", `Unsupported or unavailable confirmed action: ${action}.`);
+}
+
+type ComponentValueChange = {
+  designator: string;
+  key: string;
+  value: string;
+  expected?: string;
+  extra?: Record<string, string>;
+  extraIfSupplier?: Record<string, string>;
+};
+
+/**
+ * Writes component properties (normally "Value") through sch_PrimitiveComponent.modify.
+ * Each change must still match its expected old value; otherwise it is rejected, not overwritten.
+ */
+async function setComponentValues(params: Record<string, any>): Promise<Record<string, unknown>> {
+  ensureApi("sch_PrimitiveComponent", "getAll");
+  const dryRun = params.dryRun === true;
+  if (!dryRun) {
+    ensureApi("sch_PrimitiveComponent", "modify");
+  }
+  const changes: ComponentValueChange[] = Array.isArray(params.changes) ? params.changes : [];
+  const components = toArray(await eda.sch_PrimitiveComponent.getAll(undefined, true));
+  const results: Array<Record<string, unknown>> = [];
+
+  for (const change of changes) {
+    const matches = components.filter((component) => componentState(component, "Designator", "designator") === change.designator);
+    if (matches.length === 0) {
+      results.push({ designator: change.designator, key: change.key, status: "rejected", reason: "Designator not found." });
+      continue;
+    }
+    const current = componentProperties(matches[0])[change.key];
+    const currentText = current === undefined ? undefined : String(current);
+    if (change.expected !== undefined && !sameComponentValue(currentText, change.expected)) {
+      results.push({ designator: change.designator, key: change.key, status: "rejected", current: currentText, expected: change.expected, reason: "Current value differs from the expected value; it was edited since the proposal." });
+      continue;
+    }
+    if (currentText === change.value) {
+      results.push({ designator: change.designator, key: change.key, status: "unchanged", current: currentText });
+      continue;
+    }
+    if (dryRun) {
+      results.push({ designator: change.designator, key: change.key, status: "planned", from: currentText, to: change.value, subParts: matches.length });
+      continue;
+    }
+
+    for (const component of matches) {
+      const primitiveId = componentState(component, "PrimitiveId", "primitiveId");
+      const hasSupplier = Boolean(componentState(component, "SupplierId", "supplierId"));
+      const otherProperty = {
+        ...componentProperties(component),
+        [change.key]: change.value,
+        ...(change.extra ?? {}),
+        ...(hasSupplier ? change.extraIfSupplier ?? {} : {})
+      };
+      await eda.sch_PrimitiveComponent.modify(primitiveId, { otherProperty });
+    }
+    const refreshed = toArray(await eda.sch_PrimitiveComponent.getAll(undefined, true))
+      .find((component) => componentState(component, "Designator", "designator") === change.designator);
+    const after = refreshed ? componentProperties(refreshed)[change.key] : undefined;
+    results.push({
+      designator: change.designator,
+      key: change.key,
+      status: String(after) === change.value ? "applied" : "unverified",
+      from: currentText,
+      to: change.value,
+      readBack: after === undefined ? undefined : String(after),
+      subParts: matches.length
+    });
+  }
+
+  return { dryRun, results, betaApi: true };
+}
+
+function componentState(component: unknown, getter: string, field: string): string | undefined {
+  const record = component as Record<string, any>;
+  const value = typeof record?.[`getState_${getter}`] === "function" ? record[`getState_${getter}`]() : record?.[field];
+  return stringOrUndefined(value);
+}
+
+function componentProperties(component: unknown): Record<string, string | number | boolean> {
+  const record = component as Record<string, any>;
+  const value = typeof record?.getState_OtherProperty === "function" ? record.getState_OtherProperty() : record?.otherProperty;
+  return value && typeof value === "object" ? { ...value } : {};
 }
 
 function detectCapabilities(): Record<string, boolean> {

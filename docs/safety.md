@@ -36,6 +36,8 @@ Supported actions:
 
 The tool blocks the request unless the confirmation text contains a clear confirmation phrase.
 
+`easyeda_set_component_values` follows the same rule for value write-back, supports `dryRun` for review, and rejects any change whose live value no longer matches the value the proposal was based on. It never saves the document.
+
 Accepted examples:
 
 - `I confirm`

@@ -3,6 +3,7 @@ import type { EasyEdaBridge } from "../bridge/EasyEdaBridge.js";
 import { ok, fail } from "./toolResult.js";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { PROTOCOL_VERSION, type EditorStatus } from "../protocol/messages.js";
+import { registerSpiceTools } from "./registerSpiceTools.js";
 
 const DefaultTimeoutSchema = z.number().int().positive().max(120_000).default(10_000);
 const EndpointRefSchema = z.union([
@@ -445,6 +446,8 @@ export function registerEasyEdaTools(server: McpServer, bridge: EasyEdaBridge): 
       }
     }
   );
+
+  registerSpiceTools(server, bridge);
 }
 
 function doctorNextSteps(status: EditorStatus): string[] {

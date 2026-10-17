@@ -26,6 +26,9 @@ export type SchematicComponent = {
   footprint?: unknown;
   manufacturer?: string;
   manufacturerId?: string;
+  supplierId?: string;
+  subPartName?: string;
+  attributes?: Record<string, string>;
   position: Position;
   raw?: unknown;
 };
@@ -796,6 +799,9 @@ function normalizeComponent(raw: unknown, includeRaw: boolean): SchematicCompone
     footprint: item.footprint,
     manufacturer: stringValue(item.manufacturer ?? otherProperty.Manufacturer),
     manufacturerId: stringValue(item.manufacturerId ?? otherProperty["Manufacturer Part"]),
+    supplierId: stringValue(item.supplierId ?? otherProperty["Supplier Part"]),
+    subPartName: stringValue(item.subPartName),
+    attributes: stringAttributes(otherProperty),
     position: {
       x: numberValue(item.x),
       y: numberValue(item.y)
@@ -1336,6 +1342,16 @@ function stringValue(value: unknown): string | undefined {
 function normalizeNetName(value: unknown): string | undefined {
   const text = stringValue(value);
   return text && text !== "?" ? text : undefined;
+}
+
+function stringAttributes(record: Record<string, unknown>): Record<string, string> | undefined {
+  const output: Record<string, string> = {};
+  for (const [key, item] of Object.entries(record)) {
+    if (typeof item === "string" || typeof item === "number" || typeof item === "boolean") {
+      output[key] = String(item);
+    }
+  }
+  return Object.keys(output).length > 0 ? output : undefined;
 }
 
 function numberValue(value: unknown): number | undefined {

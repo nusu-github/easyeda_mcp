@@ -149,6 +149,42 @@ describe("EasyEdaBridge", () => {
   });
 });
 
+describe("EasyEdaBridge port sharing", () => {
+  it("stays up when the port is taken and takes it over once freed", async () => {
+    const first = await startBridge();
+    const port = Number(new URL(first.endpoint).port);
+    const second = new EasyEdaBridge({ port, portRetryMs: 50, logger: silentLogger });
+    bridges.push(second);
+
+    await second.start();
+    expect(second.getStatus().message).toContain("in use by another easyeda-mcp instance");
+    await expect(second.call("getContext")).rejects.toBeInstanceOf(BridgeUnavailableError);
+
+    await first.stop();
+    bridges.splice(bridges.indexOf(first), 1);
+    await waitFor(async () => {
+      try {
+        (await connectClient(second.endpoint)).close();
+        return true;
+      } catch {
+        return false;
+      }
+    });
+    expect(second.getStatus().message).not.toContain("in use");
+  });
+});
+
+const silentLogger = { error: () => undefined, warn: () => undefined, info: () => undefined };
+
+async function waitFor(check: () => Promise<boolean>, timeoutMs = 3_000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (await check()) return;
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  throw new Error("Timed out waiting for condition.");
+}
+
 async function startBridge(): Promise<EasyEdaBridge> {
   const bridge = new EasyEdaBridge({
     port: 0,

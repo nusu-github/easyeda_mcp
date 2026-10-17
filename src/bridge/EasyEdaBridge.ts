@@ -21,6 +21,8 @@ export type EasyEdaBridgeOptions = {
   host?: string;
   port?: number;
   logger?: Pick<Console, "error" | "warn" | "info">;
+  /** How often to retry the port while another process holds it. */
+  portRetryMs?: number;
 };
 
 export class EasyEdaBridge {
@@ -31,11 +33,15 @@ export class EasyEdaBridge {
   private socket?: WebSocket;
   private readonly pending = new Map<string, PendingCall>();
   private status: EditorStatus = createDisconnectedStatus();
+  private readonly portRetryMs: number;
+  private portRetryTimer?: NodeJS.Timeout;
+  private stopped = false;
 
   constructor(options: EasyEdaBridgeOptions = {}) {
     this.host = options.host ?? process.env.EASYEDA_MCP_WS_HOST ?? "127.0.0.1";
     this.port = options.port ?? Number(process.env.EASYEDA_MCP_WS_PORT ?? 8765);
     this.logger = options.logger ?? console;
+    this.portRetryMs = options.portRetryMs ?? 5_000;
   }
 
   get endpoint(): string {
@@ -48,21 +54,69 @@ export class EasyEdaBridge {
     return this.status;
   }
 
+  /**
+   * Starts listening for the extension. If another easyeda-mcp process already holds the port
+   * (e.g. Claude Desktop starts one per chat, Cowork and Code session), the MCP server keeps
+   * running in standby and takes the port over once it is free, instead of exiting.
+   */
   async start(): Promise<void> {
-    if (this.wss) {
+    if (this.wss || this.portRetryTimer) {
       return;
     }
+    this.stopped = false;
+    try {
+      await this.listen();
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "EADDRINUSE") {
+        throw error;
+      }
+      this.status = createDisconnectedStatus(
+        `Port ${this.port} is in use by another easyeda-mcp instance (for example another Claude window or session). This server is on standby and will take over the bridge when that instance exits.`
+      );
+      this.logger.error(`[easyeda-mcp] ws://${this.host}:${this.port} is in use; standing by and retrying every ${this.portRetryMs} ms.`);
+      this.schedulePortRetry();
+    }
+  }
 
-    this.wss = new WebSocketServer({ host: this.host, port: this.port });
-    this.wss.on("connection", (socket) => this.attachSocket(socket));
-    await new Promise<void>((resolve, reject) => {
-      this.wss?.once("listening", resolve);
-      this.wss?.once("error", reject);
-    });
+  private async listen(): Promise<void> {
+    const wss = new WebSocketServer({ host: this.host, port: this.port });
+    try {
+      await new Promise<void>((resolve, reject) => {
+        wss.once("listening", resolve);
+        wss.once("error", reject);
+      });
+    } catch (error) {
+      wss.close();
+      throw error;
+    }
+    this.wss = wss;
+    wss.on("connection", (socket) => this.attachSocket(socket));
+    this.status = createDisconnectedStatus();
     this.logger.error(`[easyeda-mcp] WebSocket bridge listening at ${this.endpoint}`);
   }
 
+  private schedulePortRetry(): void {
+    this.portRetryTimer = setTimeout(() => {
+      this.portRetryTimer = undefined;
+      if (this.stopped) {
+        return;
+      }
+      this.listen().catch((error: NodeJS.ErrnoException) => {
+        if (error.code !== "EADDRINUSE") {
+          this.logger.error(`[easyeda-mcp] Bridge listen failed: ${error.message}`);
+        }
+        if (!this.stopped) {
+          this.schedulePortRetry();
+        }
+      });
+    }, this.portRetryMs);
+    this.portRetryTimer.unref();
+  }
+
   async stop(): Promise<void> {
+    this.stopped = true;
+    clearTimeout(this.portRetryTimer);
+    this.portRetryTimer = undefined;
     this.rejectAll(new BridgeUnavailableError("EasyEDA Pro bridge is stopping."));
     this.socket?.close();
     await new Promise<void>((resolve, reject) => {

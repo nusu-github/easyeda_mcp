@@ -23,6 +23,7 @@ Use this page when you know what you want to do and need the right MCP tool.
 | Save/import/autoroute/autolayout | `easyeda_confirmed_action` |
 | Simulate in LTspice | `easyeda_export_spice`, then the LTspice MCP tools ([LTspice Loop](/ltspice-loop)) |
 | Write simulated values back | `easyeda_set_component_values` |
+| See or take the control right | `easyeda_control` |
 
 ## Recommended First Flow
 
@@ -238,6 +239,20 @@ Run with `dryRun: true` first to show the diff; real writes need an explicit con
   "runId": "20261017-120000",
   "confirmation": "I confirm"
 }
+```
+
+## Sessions and Control
+
+### `easyeda_control`
+
+Every MCP session connected to the same EasyEDA Pro window can read the project. Changing it (value write-back, save/import, navigation, file exports) needs the control right, held by one session at a time.
+
+- The first session that changes something gets the control right automatically.
+- If another session holds it, the call fails with `control_held_by_other_session` and names the holder.
+- `action: "take"` takes it over, `"release"` gives it up, `"status"` shows the holder.
+
+```json
+{ "action": "take" }
 ```
 
 ## Explicitly Confirmed Actions

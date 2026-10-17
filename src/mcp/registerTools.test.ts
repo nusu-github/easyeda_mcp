@@ -10,7 +10,7 @@ afterEach(async () => {
   await Promise.all(clients.splice(0).map((client) => client.close()));
 });
 
-async function makeClient(bridge: { endpoint: string; getStatus: () => unknown; call: ReturnType<typeof vi.fn> }): Promise<Client> {
+async function makeClient(bridge: { endpoint: string; getStatus: () => unknown; call: ReturnType<typeof vi.fn>; controlAction?: ReturnType<typeof vi.fn> }): Promise<Client> {
   const server = new McpServer({
     name: "test-server",
     version: "0.0.0"
@@ -235,3 +235,22 @@ describe("mutation confirmation guard", () => {
     });
   });
 });
+
+describe("easyeda_control", () => {
+  it("takes the control right through the bridge and reports the holder", async () => {
+    const session = { role: "peer", instanceId: "me", label: "Code", control: { holderId: "me", holderLabel: "Code", heldByThisSession: true } };
+    const bridge = {
+      endpoint: "ws://127.0.0.1:8765",
+      getStatus: () => ({ connected: true, session, updatedAt: new Date().toISOString() }),
+      call: vi.fn(),
+      controlAction: vi.fn(async () => ({ holderId: "me", holderLabel: "Code" }))
+    };
+    const client = await makeClient(bridge);
+
+    const result = await client.callTool({ name: "easyeda_control", arguments: { action: "take" } });
+
+    expect(bridge.controlAction).toHaveBeenCalledWith("take");
+    expect(result.content[0]?.text).toContain("Control right is held by this session.");
+  });
+});
+

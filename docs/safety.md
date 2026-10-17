@@ -36,6 +36,8 @@ Supported actions:
 
 The tool blocks the request unless the confirmation text contains a clear confirmation phrase.
 
+Only the session holding the control right can run project-changing tools. When several AI sessions are connected to the same EasyEDA Pro window, the others can still read, and a session must take the control right explicitly with `easyeda_control` before it can change anything that another session is working on.
+
 `easyeda_set_component_values` follows the same rule for value write-back, supports `dryRun` for review, and rejects any change whose live value no longer matches the value the proposal was based on. It never saves the document.
 
 Accepted examples:

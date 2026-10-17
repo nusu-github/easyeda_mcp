@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it } from "vitest";
 import WebSocket from "ws";
 import { EasyEdaBridge } from "./EasyEdaBridge.js";
-import { BridgeProtocolCompatibilityError, BridgeRpcError, BridgeUnavailableError } from "./errors.js";
+import { BridgeControlError, BridgeProtocolCompatibilityError, BridgeRpcError, BridgeUnavailableError } from "./errors.js";
 
 const bridges: EasyEdaBridge[] = [];
 
@@ -149,44 +149,102 @@ describe("EasyEdaBridge", () => {
   });
 });
 
-describe("EasyEdaBridge port sharing", () => {
-  it("stays up when the port is taken and takes it over once freed", async () => {
-    const first = await startBridge();
-    const port = Number(new URL(first.endpoint).port);
-    const second = new EasyEdaBridge({ port, portRetryMs: 50, logger: silentLogger });
-    bridges.push(second);
+describe("EasyEdaBridge shared sessions", () => {
+  it("relays peer calls to the extension through the hub", async () => {
+    const hub = await startBridge();
+    const extension = await connectExtension(hub.endpoint);
+    const peer = await startPeer(hub);
 
-    await second.start();
-    expect(second.getStatus().message).toContain("in use by another easyeda-mcp instance");
-    await expect(second.call("getContext")).rejects.toBeInstanceOf(BridgeUnavailableError);
+    expect(peer.getStatus().session?.role).toBe("peer");
+    await waitFor(async () => peer.getStatus().connected === true);
+    await expect(peer.call("schematicSnapshot", { allPages: true })).resolves.toEqual({ method: "schematicSnapshot", params: { allPages: true } });
+    expect(hub.getStatus().session?.peers).toBe(1);
+    extension.close();
+  });
 
-    await first.stop();
-    bridges.splice(bridges.indexOf(first), 1);
-    await waitFor(async () => {
-      try {
-        (await connectClient(second.endpoint)).close();
-        return true;
-      } catch {
-        return false;
-      }
-    });
-    expect(second.getStatus().message).not.toContain("in use");
+  it("lets anyone read but requires the control right to operate, and allows taking it", async () => {
+    const hub = await startBridge("Chat");
+    const extension = await connectExtension(hub.endpoint);
+    const peer = await startPeer(hub, "Code");
+
+    await expect(hub.call("setComponentValues", {})).resolves.toMatchObject({ method: "setComponentValues" });
+    expect(hub.getStatus().session?.control).toMatchObject({ holderLabel: "Chat", heldByThisSession: true });
+
+    await expect(peer.call("getContext")).resolves.toMatchObject({ method: "getContext" });
+    const denied = peer.call("setComponentValues", {});
+    await expect(denied).rejects.toBeInstanceOf(BridgeControlError);
+    await expect(denied).rejects.toThrow(/Chat holds/);
+
+    await expect(peer.controlAction("take")).resolves.toMatchObject({ holderLabel: "Code" });
+    await expect(peer.call("setComponentValues", {})).resolves.toMatchObject({ method: "setComponentValues" });
+    await expect(hub.call("confirmedAction", {})).rejects.toBeInstanceOf(BridgeControlError);
+    await waitFor(async () => peer.getStatus().session?.control.heldByThisSession === true);
+
+    await peer.controlAction("release");
+    await expect(hub.call("confirmedAction", {})).resolves.toMatchObject({ method: "confirmedAction" });
+    extension.close();
+  });
+
+  it("frees the control right when the holding peer disconnects", async () => {
+    const hub = await startBridge("Chat");
+    const extension = await connectExtension(hub.endpoint);
+    const peer = await startPeer(hub, "Code");
+    await peer.controlAction("take");
+
+    await peer.stop();
+    await waitFor(async () => !hub.getStatus().session?.control.holderId);
+    await expect(hub.call("zoomBoard")).resolves.toMatchObject({ method: "zoomBoard" });
+    extension.close();
+  });
+
+  it("promotes a peer to hub when the hub exits", async () => {
+    const hub = await startBridge();
+    const port = Number(new URL(hub.endpoint).port);
+    const peer = await startPeer(hub);
+
+    await hub.stop();
+    bridges.splice(bridges.indexOf(hub), 1);
+    await waitFor(async () => peer.getStatus().session?.role === "hub");
+
+    const extension = await connectExtension(`ws://127.0.0.1:${port}`);
+    await expect(peer.call("getContext")).resolves.toMatchObject({ method: "getContext" });
+    extension.close();
   });
 });
 
 const silentLogger = { error: () => undefined, warn: () => undefined, info: () => undefined };
 
+async function startPeer(hub: EasyEdaBridge, label?: string): Promise<EasyEdaBridge> {
+  const peer = new EasyEdaBridge({ port: Number(new URL(hub.endpoint).port), roleRetryMs: 50, logger: silentLogger, label });
+  bridges.push(peer);
+  await peer.start();
+  return peer;
+}
+
+/** A fake extension that says hello and echoes every call back. */
+async function connectExtension(endpoint: string): Promise<WebSocket> {
+  const client = await connectClient(endpoint);
+  client.on("message", (data) => {
+    const message = JSON.parse(data.toString());
+    client.send(JSON.stringify({ kind: "result", requestId: message.requestId, result: { method: message.method, params: message.params } }));
+  });
+  client.send(JSON.stringify({ kind: "hello", client: "easyeda-pro-extension", version: "0.1.0", protocolVersion: "0.1.0", capabilities: {} }));
+  await wait(20);
+  return client;
+}
+
 async function waitFor(check: () => Promise<boolean>, timeoutMs = 3_000): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     if (await check()) return;
-    await new Promise((resolve) => setTimeout(resolve, 50));
+    await new Promise((resolve) => setTimeout(resolve, 20));
   }
   throw new Error("Timed out waiting for condition.");
 }
 
-async function startBridge(): Promise<EasyEdaBridge> {
+async function startBridge(label?: string): Promise<EasyEdaBridge> {
   const bridge = new EasyEdaBridge({
+    label,
     port: 0,
     logger: {
       error: () => undefined,

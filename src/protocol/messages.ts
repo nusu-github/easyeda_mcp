@@ -29,6 +29,23 @@ export type EditorStatus = {
   documentInfo?: unknown;
   message?: string;
   updatedAt: string;
+  session?: BridgeSession;
+};
+
+export type ControlState = {
+  holderId?: string;
+  holderLabel?: string;
+  since?: string;
+};
+
+/** This MCP server process's place among the sessions sharing one EasyEDA Pro bridge. */
+export type BridgeSession = {
+  role: "starting" | "hub" | "peer" | "standby";
+  instanceId: string;
+  label: string;
+  /** Number of peer sessions connected through this hub. */
+  peers?: number;
+  control: ControlState & { heldByThisSession: boolean };
 };
 
 export type BridgeHelloMessage = {

@@ -161,6 +161,7 @@ export function registerEasyEdaTools(server: McpServer, bridge: EasyEdaBridge): 
             projectName: status.projectName,
             documentName: status.documentName
           },
+          session: status.session,
           status,
           nextSteps
         }
@@ -447,10 +448,44 @@ export function registerEasyEdaTools(server: McpServer, bridge: EasyEdaBridge): 
     }
   );
 
+  server.registerTool(
+    "easyeda_control",
+    {
+      title: "EasyEDA Pro control right",
+      description: "Every MCP session connected to EasyEDA Pro can read the project, but only the session holding the control right can change it (value write-back, save/import, navigation, file exports). The first session to do so gets it automatically. Use action \"status\" to see who holds it, \"take\" to take it over from another session (ask the user first), and \"release\" to give it up.",
+      inputSchema: {
+        action: z.enum(["status", "take", "release"]).default("status")
+      },
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false
+      }
+    },
+    async ({ action }) => {
+      try {
+        const control = await bridge.controlAction(action);
+        const session = bridge.getStatus().session;
+        const holder = control.holderId === session?.instanceId ? "this session" : control.holderLabel ?? "nobody";
+        return ok(`Control right is held by ${holder}.`, { action, control, session });
+      } catch (error) {
+        return fail(error);
+      }
+    }
+  );
+
   registerSpiceTools(server, bridge);
 }
 
 function doctorNextSteps(status: EditorStatus): string[] {
+  if (status.session?.role === "standby") {
+    return [
+      "Another process holds the bridge port and is not a compatible easyeda-mcp hub.",
+      "Restart every MCP client that runs an older easyeda-mcp build, then retry."
+    ];
+  }
+
   if (!status.connected) {
     return [
       "Open EasyEDA Pro.",

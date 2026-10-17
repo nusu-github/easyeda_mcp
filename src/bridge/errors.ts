@@ -35,3 +35,15 @@ export class BridgeTimeoutError extends Error {
     this.name = "BridgeTimeoutError";
   }
 }
+
+export class BridgeControlError extends Error {
+  readonly method: string;
+  readonly holder: string;
+
+  constructor(method: string, holder: string) {
+    super(`"${method}" needs the EasyEDA control right, which ${holder} holds. Call easyeda_control with action "take" to take it over.`);
+    this.name = "BridgeControlError";
+    this.method = method;
+    this.holder = holder;
+  }
+}

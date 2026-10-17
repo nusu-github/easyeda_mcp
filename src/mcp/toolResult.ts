@@ -1,4 +1,4 @@
-import { BridgeProtocolCompatibilityError, BridgeRpcError, BridgeTimeoutError, BridgeUnavailableError } from "../bridge/errors.js";
+import { BridgeControlError, BridgeProtocolCompatibilityError, BridgeRpcError, BridgeTimeoutError, BridgeUnavailableError } from "../bridge/errors.js";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 
 export type ToolResult = CallToolResult;
@@ -70,6 +70,20 @@ function normalizeError(error: unknown): { message: string; [key: string]: unkno
         "Rebuild and reload the EasyEDA Pro extension.",
         "Restart the MCP client session so it reloads the tool catalog.",
         "Use easyeda_doctor to confirm protocol compatibility."
+      ]
+    };
+  }
+
+  if (error instanceof BridgeControlError) {
+    return {
+      error: "control_held_by_other_session",
+      message: error.message,
+      retryable: true,
+      method: error.method,
+      holder: error.holder,
+      nextSteps: [
+        `Ask the user whether to take the EasyEDA control right from ${error.holder}.`,
+        "If they agree, call easyeda_control with action \"take\", then retry."
       ]
     };
   }

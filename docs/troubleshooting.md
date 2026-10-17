@@ -65,7 +65,9 @@ Check:
 4. `EASYEDA_MCP_WS_PORT` was not changed unexpectedly
 5. local security tooling is not blocking loopback WebSocket traffic
 
-Only one MCP server process can own the port. Clients such as Claude Desktop start one process per chat, Cowork, and Code session; the extra processes stay up on standby (`easyeda_doctor` says the port is in use by another instance) and the first one to find the port free takes it over. The extension talks to whichever process owns the port, so use EasyEDA tools from one session at a time. After the owning session closes, use `MCP Bridge -> Reconnect` in EasyEDA Pro if the extension does not reconnect on its own.
+Several MCP server processes can share one EasyEDA Pro window. Clients such as Claude Desktop start one process per chat, Cowork, and Code session: the first process to bind the port becomes the hub, and the others connect to it as peers. `easyeda_doctor` shows this under `session.role`. If the hub's session closes, a peer takes the port over; use `MCP Bridge -> Reconnect` in EasyEDA Pro if the extension does not follow within a few seconds.
+
+If `session.role` is `standby`, the port is held by something that is not a compatible easyeda-mcp hub, usually an older build still running in another client. Restart that client.
 
 ## EasyEDA Pro Rejects the Extension Package
 

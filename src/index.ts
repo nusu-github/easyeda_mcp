@@ -10,6 +10,12 @@ async function main(): Promise<void> {
 
   const server = createMcpServer(bridge);
   const transport = new StdioServerTransport();
+  server.server.oninitialized = () => {
+    const client = server.server.getClientVersion();
+    if (client?.name) {
+      bridge.setLabel(`${client.name} (pid ${process.pid})`);
+    }
+  };
   await server.connect(transport);
   installLifecycleHandlers({ bridge, server, transport });
 }
